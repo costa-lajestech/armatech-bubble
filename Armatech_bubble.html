@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Armatech · Ferragem Armada</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700&family=Lato:wght@400;700&display=swap" rel="stylesheet">
+
+<!-- ══════════════════════════════════════════════════════════════
+     BLOCO DE CONFIGURAÇÃO — TODAS AS VARIÁVEIS DO BUBBLE AQUI
+     O Bubble substitui os valores abaixo com dados dinâmicos.
+     Exemplo (Bubble HTML element): CONFIG.ORC_ID = '[Current Page Orcamento s _id]'
+════════════════════════════════════════════════════════════════ -->
+<script>
+const CONFIG = {
+  /* ── Bubble API ──────────────────────────────────────────── */
+  API_BASE  : 'https://app.lajestech.com.br/api/1.1',
+  API_TOKEN : '3685dac860b673b58b65e7822e17f1bd',  // ← Bubble: App token
+
+  /* ── Contexto do pedido (Bubble injeta) ─────────────────── */
+  ORC_ID    : '',   // ← Bubble: Current Page Orcamento's _id
+  EMP_ID    : '',   // ← Bubble: Current Page Empresa's _id
+  USER_ID   : '',   // ← Bubble: Current User's _id
+
+  /* ── Dados do projeto (Bubble injeta) ───────────────────── */
+  PROJ_NOME    : 'Projeto',
+  PROJ_CLIENTE : '',
+  PROJ_PAV     : '',
+  PROJ_REV     : 'R01',
+  PROJ_RESP    : '',
+  PROJ_NORMA   : 'NBR 6118',
+
+  /* ── Preço padrão por kg ────────────────────────────────── */
+  PRECO_KG : 8.50,  // ← Bubble: Empresa's preco_kg_aco
+
+  /* ── Endpoints dos workflows Bubble (POST) ──────────────── */
+  WF_INSERIR : '/wf/armatech_inserir_ferragem',
+  WF_EDITAR  : '/wf/armatech_editar_ferragem',
+  WF_EXCLUIR : '/wf/armatech_excluir_ferragem',
+
+  /* ── Data type para leitura (GET) ───────────────────────── */
+  OBJ_FERRAGEM : '/obj/armatech_ferragem',
+
+  /* ── Modo: 'popup_only' | 'auto_open' ──────────────────── */
+  MODO : 'popup_only',
+};
+
+/* ════════════════════════════════════════════════════════════
+   CONSTANTES DE ENGENHARIA (fixas — não alterar)
+════════════════════════════════════════════════════════════ */
+const KGM = {4.2:0.109,5:0.154,6.3:0.245,8:0.395,10:0.617,12.5:0.963,16:1.578,20:2.466,25:3.853};
+const BITS = Object.keys(KGM).map(Number);
+const TRELICAS = {'TR 8645':0.735,'TR 12645':0.880,'TR 16745':1.060,'TR 20745':1.222,'TR 25856':1.556};
+const TELAS_PADRAO = {'Q-61 (Ø3,4 c/15)':0.97,'Q-92 (Ø4,2 c/15)':1.48,'Q-113 (Ø4,2 c/10)':1.80,'Q-138 (Ø4,2 c/10)':2.20,'Q-196 (Ø5 c/10)':3.11};
+const REVENDA_CAT = [
+  {prod:'Barra CA-50 12 m',un:'barra',preco:78,pesoFn:it=>12*KGM[it.bit||10]*it.q,temBit:true},
+  {prod:'Arame recozido nº 18',un:'kg',preco:14.5,pesoFn:it=>it.q},
+  {prod:'Prego 17×27',un:'kg',preco:13.9,pesoFn:it=>it.q},
+  {prod:'Espaçador plástico 25 mm',un:'un',preco:0.18,pesoFn:it=>0},
+];
+const CATALOGO = [
+  {g:'Estruturais sob medida',itens:[
+    {tipo:'Viga',eng:'viga',desc:'Armação completa: longitudinais + estribos'},
+    {tipo:'Baldrame',eng:'viga',desc:'Viga de fundação'},
+    {tipo:'Cinta de amarração',eng:'viga',desc:'Cinta sobre alvenaria'},
+    {tipo:'Verga / Contraverga',eng:'viga',desc:'Portas e janelas'},
+    {tipo:'Pilar',eng:'pilar',desc:'Armação de pilar sob projeto'},
+    {tipo:'Sapata',eng:'sapata',desc:'Malha X/Y sob medida'},
+    {tipo:'Bloco de coroamento',eng:'sapata',desc:'Sobre estacas'},
+    {tipo:'Escada',eng:'viga',desc:'Lance armado'},
+  ]},
+  {g:'Fundação profunda',itens:[
+    {tipo:'Estaca',eng:'circ',desc:'Armadura circular + espiral'},
+    {tipo:'Tubulão',eng:'circ',desc:'Circular de grande diâmetro'},
+  ]},
+  {g:'Peças prontas / avulsas',itens:[
+    {tipo:'Coluna pronta',eng:'pilar',desc:'Padrão de prateleira'},
+    {tipo:'Estribo pronto',eng:'estribo',desc:'Vendido por cento/milheiro'},
+    {tipo:'Corte e dobra',eng:'reta',desc:'Peça avulsa sob desenho'},
+  ]},
+  {g:'Telas e treliças',itens:[
+    {tipo:'Tela soldada',eng:'tela',desc:'Painéis Q-61 a Q-196'},
+    {tipo:'Malha para laje',eng:'tela',desc:'Sob medida da laje'},
+    {tipo:'Treliça',eng:'trelica',desc:'TR 8 a TR 25 (kg/m)'},
+  ]},
+  {g:'Revenda (sem produção)',itens:[
+    {tipo:'Item de revenda',eng:'revenda',desc:'Barra 12 m, arame, prego, espaçador'},
+  ]},
+];
+const PREF = {
+  'Viga':'V','Baldrame':'BLD','Pilar':'P','Sapata':'S','Estaca':'EK','Tubulão':'TB',
+  'Coluna pronta':'CP','Estribo pronto':'EP','Corte e dobra':'CD','Tela soldada':'TS',
+  'Malha para laje':'ML','Treliça':'TR','Cinta de amarração':'CA','Verga / Contraverga':'VG',
+  'Bloco de coroamento':'BC','Escada':'ES','Item de revenda':'RV'
+};
+
+/* ── Headers HTTP derivados do CONFIG ───────────────────────── */
+const API_HEADERS = {
+  'Authorization': `Bearer ${CONFIG.API_TOKEN}`,
+  'Content-Type' : 'application/json',
+};
+</script>
+
+<style>
+:root{--pr:#12bded;--prdk:#0E96BC;--navy:#1a3a5c;--sec:#2a7a8c;--grn:#1A8C47;--red:#B42318;--tx:#1F2937;--mut:#6B7280;--bd:#E5E7EB}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Lato',sans-serif;background:transparent;color:var(--tx);font-size:14px}
+.btn{background:var(--pr);color:#04293d;border:0;border-radius:8px;padding:9px 18px;font-family:'Poppins';font-weight:600;font-size:13px;cursor:pointer;transition:background .15s}
+.btn:hover{background:var(--prdk);color:#fff}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.ghost{background:#fff;border:1.5px solid var(--pr);color:var(--prdk)}
+.btn.ghost:hover{background:#E6F8FD}
+.btn.sm{padding:5px 11px;font-size:12px}
+.btn.navy{background:var(--navy);color:#fff}
+.btn.navy:hover{background:#0f2840}
+.btn-icon{border:0;background:none;cursor:pointer;font-size:13px;padding:4px 7px;border-radius:6px;color:var(--mut)}
+.btn-icon:hover{background:#f3f4f6;color:var(--navy)}
+.field{margin-top:10px}
+.field label{display:block;font-size:11px;font-weight:700;color:var(--mut);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px}
+.field input,.field select{width:100%;padding:8px 10px;border:1.5px solid var(--bd);border-radius:8px;font-family:'Lato';font-size:13.5px;color:var(--tx);background:#fff}
+.field input:focus,.field select:focus{outline:0;border-color:var(--pr)}
+.field input.err-input{border-color:var(--red)}
+.frow{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+.sec-title{display:flex;align-items:center;gap:10px;margin:16px 0 8px}
+.sec-title h2{font-family:'Poppins';font-size:13px;white-space:nowrap;color:var(--sec)}
+.sec-title .line{flex:1;height:1px;background:var(--bd)}
+.err-box{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-top:10px}
+.err-box p{color:var(--red);font-size:12px;margin:2px 0}
+.mini{font-size:11.5px;color:var(--mut)}
+.tag-b{font-weight:700;color:var(--prdk)}
+/* Popup */
+.modal-bg{position:fixed;inset:0;background:rgba(10,25,41,.58);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:20px;overflow-y:auto}
+.modal-bg.open{display:flex}
+.popup{background:#fff;border-radius:14px;width:100%;max-width:980px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.25);margin:auto}
+.popup-hd{background:var(--navy);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;border-radius:14px 14px 0 0;flex-shrink:0}
+.popup-hd h3{font-family:'Poppins';font-size:15px;color:#fff;margin:0}
+.popup-hd .btn-icon{color:#aac4dc;font-size:16px;padding:4px 8px}
+.popup-hd .btn-icon:hover{background:rgba(255,255,255,.15);color:#fff}
+.popup-tipo{padding:12px 20px;background:#f8fafc;border-bottom:1px solid var(--bd);flex-shrink:0}
+.popup-tipo label{font-size:11px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px}
+.popup-tipo select{width:100%;max-width:500px;padding:9px 12px;border:1.5px solid var(--bd);border-radius:8px;font-family:'Poppins';font-weight:600;font-size:13px;color:var(--navy);background:#fff}
+.popup-tipo select:focus{outline:0;border-color:var(--pr)}
+.popup-two{display:grid;grid-template-columns:1fr 1fr;min-height:300px}
+.popup-form-wrap{padding:16px 20px;border-right:1px solid var(--bd);overflow-y:auto;max-height:55vh}
+.popup-right{padding:16px;background:#f8fafc;display:flex;flex-direction:column;gap:10px;overflow-y:auto;max-height:55vh}
+.popup-svg-wrap{text-align:center;background:#fff;border-radius:10px;border:1px solid var(--bd);padding:10px}
+#popup-pecas table{font-size:12px;width:100%;border-collapse:collapse;background:#fff}
+#popup-pecas th{font-size:11px;padding:6px 8px;background:var(--sec);color:#fff;text-align:left}
+#popup-pecas td{padding:5px 8px;font-size:12px;border-bottom:1px solid var(--bd)}
+.popup-ft{padding:14px 20px;border-top:2px solid var(--bd);background:#fff;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;border-radius:0 0 14px 14px;flex-shrink:0}
+.popup-ft .field{margin:0}
+/* Toast */
+.toast{position:fixed;bottom:24px;right:24px;background:var(--navy);color:#fff;padding:12px 20px;border-radius:10px;font-family:'Poppins';font-size:13px;font-weight:600;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+.toast.ok{background:var(--grn)}
+.toast.err{background:var(--red)}
+/* Loading spinner */
+.btn-loading{position:relative;pointer-events:none}
+.btn-loading::after{content:'';position:absolute;right:12px;top:50%;transform:translateY(-50%);width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:translateY(-50%) rotate(360deg)}}
+@media(max-width:900px){.popup-two{grid-template-columns:1fr}.popup-form-wrap{border-right:none;border-bottom:1px solid var(--bd)}}
+</style>
+</head>
+<body>
+
+<!-- ══ Popup: Inserir / Editar Ferragem ══ -->
+<div class="modal-bg" id="popupBg" onclick="if(event.target===this)closePopup()">
+  <div class="popup" id="popupBox">
+    <div class="popup-hd">
+      <h3 id="popup-title">Inserir Ferragem Armada</h3>
+      <button class="btn-icon" onclick="closePopup()">✕</button>
+    </div>
+    <div class="popup-tipo">
+      <label>Tipo de ferragem</label>
+      <select id="tipo-sel" onchange="tipoChanged(this.value)">
+        <option value="">— selecione o tipo de produto —</option>
+      </select>
+    </div>
+    <div id="popup-body" style="display:none">
+      <div class="popup-two">
+        <div class="popup-form-wrap">
+          <div id="popup-form"></div>
+          <div id="popup-erros"></div>
+        </div>
+        <div class="popup-right">
+          <div class="popup-svg-wrap">
+            <svg id="secao-modal" width="260" height="270"></svg>
+          </div>
+          <div id="popup-pecas"></div>
+        </div>
+      </div>
+    </div>
+    <div class="popup-ft">
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+        <div class="field" style="margin:0">
+          <label>Código</label>
+          <input id="popup-cod" type="text" style="width:100px" placeholder="Auto">
+        </div>
+        <div class="field" style="margin:0">
+          <label>Preço / kg (R$)</label>
+          <input id="popup-preco" type="number" step="0.1" value="8.50" style="width:90px" oninput="atualizaTotal()">
+        </div>
+        <div style="padding-bottom:2px">
+          <div style="font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Total estimado</div>
+          <div id="popup-total" style="font-family:Poppins;font-weight:700;font-size:18px;color:var(--navy)">—</div>
+        </div>
+      </div>
+      <button class="btn navy" id="btn-inserir" onclick="submitFerragem()" disabled>Inserir Ferragem</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   ESTADO LOCAL (temporário — dados vivem no Bubble)
+══════════════════════════════════════════════════════ */
+let _elTemp    = null;   // ferragem sendo editada no popup
+let _editingId = null;   // código local (ex: "V1")
+let _bubbleId  = null;   // _id do registro Bubble (para edição)
+let _codsUsados = [];    // códigos já inseridos neste orçamento
+
+/* ══════════════════════════════════════════════════════
+   UTILITÁRIOS DE ENGENHARIA
+══════════════════════════════════════════════════════ */
+const engDe = t => { for(const g of CATALOGO) for(const i of g.itens) if(i.tipo===t) return i.eng; return 'viga'; };
+const R$    = v => 'R$ '+v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fkg   = v => v.toLocaleString('pt-BR',{maximumFractionDigits:1})+' kg';
+
+function pecas(el){
+  const eng=engDe(el.tipo),out=[],qc=el.qcom||1;
+  if(eng==='viga'||eng==='pilar'){
+    let nb=0;
+    el.longs.forEach(lg=>{nb++;
+      const comp=Math.max(0,el.L-2*el.cob+2*lg.anc);
+      out.push({cod:'B'+nb,tipo:'Barra',pos:lg.pos,bit:lg.bit,comp,q:lg.q*qc,
+        dobra:lg.anc>0?`2 dobras 90° (${lg.anc} cm)`:'reta',
+        peso:comp/100*KGM[lg.bit]*lg.q*qc})});
+    if(el.est){
+      const w=el.b-2*el.cob,hh=el.h-2*el.cob,gan=Math.max(5,10*el.est.bit/10);
+      const comp=2*(w+hh)+2*gan,q=(el.est.esp>0?Math.floor((el.L-2*el.cob)/el.est.esp)+1:0)*qc;
+      out.push({cod:'E1',tipo:'Estribo',pos:`${w.toFixed(0)}×${hh.toFixed(0)} c/${el.est.esp}`,bit:el.est.bit,comp,q,
+        dobra:'4×90° + ganchos 135°',peso:comp/100*KGM[el.est.bit]*q})}
+  } else if(eng==='sapata'){
+    let nb=0;
+    el.longs.forEach(lg=>{nb++;
+      const comp=Math.max(0,(lg.pos.includes('X')?el.b:el.h)-2*el.cob+2*lg.anc);
+      out.push({cod:'B'+nb,tipo:'Barra',pos:lg.pos,bit:lg.bit,comp,q:lg.q*qc,
+        dobra:`2 dobras 90° (${lg.anc} cm)`,peso:comp/100*KGM[lg.bit]*lg.q*qc})})
+  } else if(eng==='circ'){
+    el.longs.forEach((lg,i)=>{
+      const comp=el.L+lg.anc;
+      out.push({cod:'B'+(i+1),tipo:'Barra',pos:'Longitudinal (círculo)',bit:lg.bit,comp,q:lg.q*qc,
+        dobra:`arranque ${lg.anc} cm`,peso:comp/100*KGM[lg.bit]*lg.q*qc})});
+    const dEsp=el.D-2*el.cob,voltas=Math.ceil(el.L/el.espiral.passo)+1;
+    const compEsp=voltas*Math.PI*dEsp+30;
+    out.push({cod:'H1',tipo:'Espiral',pos:`Ø${dEsp.toFixed(0)} cm · passo ${el.espiral.passo}`,bit:el.espiral.bit,comp:compEsp,q:qc,
+      dobra:`${voltas} voltas helicoidais (rolo)`,peso:compEsp/100*KGM[el.espiral.bit]*qc})
+  } else if(eng==='estribo'){
+    const gan=Math.max(5,10*el.estb.bit/10),comp=2*(el.b+el.h)+2*gan;
+    out.push({cod:'E1',tipo:'Estribo',pos:`${el.b}×${el.h} cm`,bit:el.estb.bit,comp,q:qc,
+      dobra:'4×90° + ganchos 135°',peso:comp/100*KGM[el.estb.bit]*qc})
+  } else if(eng==='reta'){
+    const comp=el.comp+el.dobras*el.anc;
+    out.push({cod:'B1',tipo:'Barra',pos:'Sob desenho',bit:el.bitr,comp,q:qc,
+      dobra:el.dobras?`${el.dobras} dobra(s) de ${el.anc} cm`:'reta',peso:comp/100*KGM[el.bitr]*qc})
+  } else if(eng==='tela'){
+    const kgm2=TELAS_PADRAO[el.modeloTela],area=el.W/100*el.H/100;
+    out.push({cod:'T1',tipo:'Painel de tela',pos:el.modeloTela,bit:'-',comp:el.H,q:qc,
+      dobra:`painel ${(el.W/100).toFixed(2)}×${(el.H/100).toFixed(2)} m · ${(area*kgm2).toFixed(1)} kg/painel`,peso:area*kgm2*qc})
+  } else if(eng==='trelica'){
+    out.push({cod:'TR1',tipo:'Treliça',pos:el.modeloTr,bit:'-',comp:el.L,q:qc,
+      dobra:`${TRELICAS[el.modeloTr]} kg/m`,peso:el.L/100*TRELICAS[el.modeloTr]*qc})
+  } else if(eng==='revenda'){
+    el.rev.forEach((it,i)=>{const cat=REVENDA_CAT.find(c=>c.prod===it.prod);
+      out.push({cod:'R'+(i+1),tipo:'Revenda',pos:it.prod+(cat.temBit?` Ø${it.bit}`:''),bit:it.bit||'-',comp:0,q:it.q,
+        dobra:cat.un,peso:cat.pesoFn(it),precoUn:cat.preco})})
+  }
+  return out;
+}
+const pesoEl = el => pecas(el).reduce((s,p)=>s+p.peso,0);
+
+function resumoEl(e){
+  const eng=engDe(e.tipo);
+  if(eng==='circ')    return `Ø${e.D}×${e.L} cm`;
+  if(eng==='estribo') return `${e.b}×${e.h} cm · ${e.qcom} un`;
+  if(eng==='reta')    return `Ø${e.bitr} · ${e.comp} cm · ${e.qcom} un`;
+  if(eng==='tela')    return `${e.modeloTela} · ${e.qcom} painéis`;
+  if(eng==='trelica') return `${e.modeloTr} · ${(e.L/100).toFixed(1)} m · ${e.qcom} un`;
+  if(eng==='revenda') return `${e.rev.length} item(s)`;
+  return `${e.b}×${e.h}×${e.L} cm${(e.qcom||1)>1?' · '+e.qcom+' un':''}`;
+}
+
+function validaEl(el){
+  const erros=[],eng=engDe(el.tipo);
+  if(eng==='viga'||eng==='pilar'){
+    if(!el.L||el.L<=0) erros.push('Comprimento deve ser maior que zero');
+    if(!el.b||el.b<=0) erros.push('Largura b deve ser maior que zero');
+    if(!el.h||el.h<=0) erros.push('Altura h deve ser maior que zero');
+    if(el.cob>=el.b/2) erros.push(`Cobrimento ${el.cob}cm ≥ b/2 — seção inválida`);
+    if(el.cob>=el.h/2) erros.push(`Cobrimento ${el.cob}cm ≥ h/2 — seção inválida`);
+    if(el.est&&el.est.esp<=0) erros.push('Espaçamento de estribos deve ser maior que zero');
+  } else if(eng==='sapata'){
+    if(el.cob>=Math.min(el.b,el.h)/2) erros.push('Cobrimento excessivo');
+  } else if(eng==='circ'){
+    if(el.D<=0) erros.push('Diâmetro deve ser maior que zero');
+    if(el.cob>=el.D/2) erros.push('Cobrimento maior que o raio');
+    if(el.espiral&&el.espiral.passo<=0) erros.push('Passo da espiral deve ser maior que zero');
+  }
+  return erros;
+}
+
+/* ══════════════════════════════════════════════════════
+   COMUNICAÇÃO COM O BUBBLE
+══════════════════════════════════════════════════════ */
+
+/** Notifica o Bubble pai (iframe postMessage) */
+function notifyBubble(event, data){
+  window.parent.postMessage({ source:'armatech', event, data }, '*');
+}
+
+/** POST para workflow do Bubble */
+async function bubblePost(endpoint, body){
+  const res = await fetch(CONFIG.API_BASE + endpoint, {
+    method:'POST', headers:API_HEADERS, body:JSON.stringify(body)
+  });
+  if(!res.ok) throw new Error(`Bubble ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+/** GET do banco do Bubble */
+async function bubbleGet(endpoint, params={}){
+  const url = new URL(CONFIG.API_BASE + endpoint);
+  Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,typeof v==='object'?JSON.stringify(v):v));
+  const res = await fetch(url.toString(), {headers:API_HEADERS});
+  if(!res.ok) throw new Error(`Bubble GET ${res.status}`);
+  return res.json();
+}
+
+/** Carrega códigos já usados para evitar duplicata */
+async function carregarCodsUsados(){
+  if(!CONFIG.ORC_ID) return;
+  try {
+    const data = await bubbleGet(CONFIG.OBJ_FERRAGEM, {
+      constraints: JSON.stringify([{key:'orc_id',constraint_type:'equals',value:CONFIG.ORC_ID}]),
+      fields:'codigo'
+    });
+    _codsUsados = (data.response?.results||[]).map(r=>r.codigo||'');
+  } catch(e){ console.warn('Não foi possível carregar códigos existentes:', e); }
+}
+
+/* ══════════════════════════════════════════════════════
+   SUBMIT — salvar no Bubble via POST
+══════════════════════════════════════════════════════ */
+async function submitFerragem(){
+  if(!_elTemp) return;
+  const erros = validaEl(_elTemp);
+  if(erros.length){ alert('Corrija os erros antes de inserir:\n'+erros.join('\n')); return; }
+
+  const cod   = document.getElementById('popup-cod').value.trim().toUpperCase();
+  const preco = +document.getElementById('popup-preco').value || CONFIG.PRECO_KG;
+  const ps    = pecas(_elTemp);
+  const peso  = ps.reduce((s,p)=>s+p.peso,0);
+
+  const payload = {
+    orc_id         : CONFIG.ORC_ID,
+    emp_id         : CONFIG.EMP_ID,
+    user_id        : CONFIG.USER_ID,
+    codigo         : cod,
+    tipo           : _elTemp.tipo,
+    descricao      : resumoEl(_elTemp),
+    peso_kg        : +peso.toFixed(3),
+    preco_kg       : preco,
+    total_estimado : +(peso*preco).toFixed(2),
+    dados_json     : JSON.stringify(_elTemp),  // para recalcular depois
+    proj_nome      : CONFIG.PROJ_NOME,
+    proj_rev       : CONFIG.PROJ_REV,
+  };
+  if(_bubbleId) payload.ferragem_bubble_id = _bubbleId;
+
+  const endpoint = _bubbleId ? CONFIG.WF_EDITAR : CONFIG.WF_INSERIR;
+  const btnEl    = document.getElementById('btn-inserir');
+  btnEl.classList.add('btn-loading');
+  btnEl.disabled = true;
+
+  try {
+    const res = await bubblePost(endpoint, payload);
+    showToast(_bubbleId ? 'Ferragem atualizada!' : 'Ferragem inserida!', 'ok');
+    notifyBubble(_bubbleId ? 'ferragem_editada' : 'ferragem_inserida', {
+      bubble_id      : res.id || _bubbleId,
+      codigo         : cod,
+      tipo           : _elTemp.tipo,
+      descricao      : resumoEl(_elTemp),
+      peso_kg        : +peso.toFixed(3),
+      total_estimado : +(peso*preco).toFixed(2),
+    });
+    setTimeout(()=>closePopup(), 600);
+  } catch(e){
+    showToast('Erro ao salvar: '+e.message, 'err');
+    btnEl.classList.remove('btn-loading');
+    btnEl.disabled = false;
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   POPUP — abrir / fechar
+══════════════════════════════════════════════════════ */
+function openPopup(opts={}){
+  _editingId = opts.editId   || null;
+  _bubbleId  = opts.bubbleId || null;
+  if(opts.codsUsados) _codsUsados = opts.codsUsados;
+
+  document.getElementById('popup-title').textContent =
+    _editingId ? `Editar Ferragem — ${_editingId}` : 'Inserir Ferragem Armada';
+  document.getElementById('btn-inserir').textContent =
+    _editingId ? 'Salvar Alterações' : 'Inserir Ferragem';
+  document.getElementById('popup-preco').value = CONFIG.PRECO_KG;
+
+  // Preenche dropdown de tipo
+  const sel = document.getElementById('tipo-sel');
+  sel.innerHTML = `<option value="">— selecione o tipo de produto —</option>`;
+  CATALOGO.forEach(g=>{
+    const og=document.createElement('optgroup'); og.label=g.g;
+    g.itens.forEach(i=>{
+      const o=document.createElement('option');
+      o.value=i.tipo; o.textContent=i.tipo+' — '+i.desc;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  });
+
+  if(_editingId && opts.dadosJson){
+    // Modo edição: carrega dados existentes do Bubble
+    try {
+      _elTemp = typeof opts.dadosJson==='string' ? JSON.parse(opts.dadosJson) : opts.dadosJson;
+      sel.value = _elTemp.tipo;
+      document.getElementById('popup-preco').value = _elTemp._precoKg || CONFIG.PRECO_KG;
+      document.getElementById('popup-cod').value   = _editingId;
+      document.getElementById('popup-body').style.display = '';
+      document.getElementById('btn-inserir').disabled = false;
+      renderPopupBody();
+    } catch(e){ console.error('Erro ao parsear dadosJson:', e); }
+  } else {
+    _elTemp = null;
+    sel.value = '';
+    document.getElementById('popup-body').style.display = 'none';
+    document.getElementById('btn-inserir').disabled = true;
+    document.getElementById('popup-cod').value = '';
+    document.getElementById('popup-total').textContent = '—';
+  }
+  document.getElementById('popupBg').classList.add('open');
+}
+
+function closePopup(){
+  document.getElementById('popupBg').classList.remove('open');
+  _elTemp=null; _editingId=null; _bubbleId=null;
+  notifyBubble('popup_fechado', {});
+}
+
+/* ══════════════════════════════════════════════════════
+   POPUP — seleção de tipo
+══════════════════════════════════════════════════════ */
+function tipoChanged(tipo){
+  if(!tipo){
+    _elTemp=null;
+    document.getElementById('popup-body').style.display='none';
+    document.getElementById('btn-inserir').disabled=true;
+    document.getElementById('popup-total').textContent='—';
+    return;
+  }
+  const eng=engDe(tipo);
+  _elTemp={id:'_tmp',tipo};
+  if(eng==='viga')    Object.assign(_elTemp,{b:20,h:40,L:400,cob:2.5,longs:[{pos:'Superior',bit:8,q:2,anc:25},{pos:'Inferior',bit:10,q:3,anc:25}],est:{bit:5,esp:15}});
+  else if(eng==='pilar')  Object.assign(_elTemp,{b:20,h:20,L:290,cob:2.5,longs:[{pos:'Longitudinal',bit:10,q:4,anc:40}],est:{bit:5,esp:12},qcom:tipo==='Coluna pronta'?10:1});
+  else if(eng==='sapata') Object.assign(_elTemp,{b:90,h:90,L:25,cob:4,longs:[{pos:'Malha X',bit:8,q:7,anc:12},{pos:'Malha Y',bit:8,q:7,anc:12}],est:null});
+  else if(eng==='circ')   Object.assign(_elTemp,{D:30,L:600,cob:3,longs:[{pos:'Longitudinal',bit:10,q:6,anc:50}],espiral:{bit:5,passo:15}});
+  else if(eng==='estribo')Object.assign(_elTemp,{b:12,h:22,cob:0,estb:{bit:4.2},qcom:1000});
+  else if(eng==='reta')   Object.assign(_elTemp,{comp:300,dobras:2,anc:20,bitr:10,qcom:100});
+  else if(eng==='tela')   Object.assign(_elTemp,{W:245,H:600,modeloTela:'Q-92 (Ø4,2 c/15)',qcom:10});
+  else if(eng==='trelica')Object.assign(_elTemp,{modeloTr:'TR 8645',L:800,qcom:100});
+  else if(eng==='revenda')Object.assign(_elTemp,{rev:[{prod:'Barra CA-50 12 m',bit:10,q:10}]});
+
+  // Sugere código sem conflito
+  const pref=PREF[tipo]||'FA';
+  let n=1; while(_codsUsados.includes(pref+n)) n++;
+  document.getElementById('popup-cod').value=pref+n;
+
+  document.getElementById('popup-body').style.display='';
+  document.getElementById('btn-inserir').disabled=false;
+  renderPopupBody();
+}
+
+/* ══════════════════════════════════════════════════════
+   POPUP — renderizar form + SVG + tabela de peças
+══════════════════════════════════════════════════════ */
+function renderPopupBody(){
+  if(!_elTemp) return;
+  const eng=engDe(_elTemp.tipo);
+  let form='';
+
+  if(eng==='viga'||eng==='pilar'){
+    form=`<div class="frow">
+      <div class="field"><label>Largura b (cm)</label><input type="number" value="${_elTemp.b}" class="${_elTemp.cob>=_elTemp.b/2?'err-input':''}" onchange="edT('b',this.value)"></div>
+      <div class="field"><label>Altura h (cm)</label><input type="number" value="${_elTemp.h}" class="${_elTemp.cob>=_elTemp.h/2?'err-input':''}" onchange="edT('h',this.value)"></div>
+      <div class="field"><label>Comprimento (cm)</label><input type="number" value="${_elTemp.L}" onchange="edT('L',this.value)"></div>
+      <div class="field"><label>Cobrimento (cm)</label><input type="number" step="0.5" value="${_elTemp.cob}" onchange="edT('cob',this.value)"></div>
+      ${_elTemp.qcom!==undefined?`<div class="field"><label>Qtd de peças</label><input type="number" value="${_elTemp.qcom}" onchange="edT('qcom',this.value)"></div>`:''}
+    </div>
+    ${_elTemp.longs.map((lg,i)=>`
+    <div class="sec-title"><h2>Armadura ${lg.pos}</h2><div class="line"></div></div>
+    <div class="frow">
+      <div class="field"><label>Bitola (mm)</label><select onchange="edTl(${i},'bit',this.value)">${BITS.map(b=>`<option ${b==lg.bit?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Quantidade</label><input type="number" value="${lg.q}" onchange="edTl(${i},'q',this.value)"></div>
+      <div class="field"><label>Ancoragem (cm)</label><input type="number" value="${lg.anc}" onchange="edTl(${i},'anc',this.value)"></div>
+    </div>`).join('')}
+    ${_elTemp.est?`<div class="sec-title"><h2>Estribos</h2><div class="line"></div></div>
+    <div class="frow">
+      <div class="field"><label>Bitola (mm)</label><select onchange="edTe('bit',this.value)">${BITS.map(b=>`<option ${b==_elTemp.est.bit?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Espaçamento (cm)</label><input type="number" value="${_elTemp.est.esp}" class="${_elTemp.est.esp<=0?'err-input':''}" onchange="edTe('esp',this.value)"></div>
+    </div>`:''}`;
+  } else if(eng==='sapata'){
+    form=`<div class="frow">
+      <div class="field"><label>Base X (cm)</label><input type="number" value="${_elTemp.b}" onchange="edT('b',this.value)"></div>
+      <div class="field"><label>Base Y (cm)</label><input type="number" value="${_elTemp.h}" onchange="edT('h',this.value)"></div>
+      <div class="field"><label>Altura (cm)</label><input type="number" value="${_elTemp.L}" onchange="edT('L',this.value)"></div>
+      <div class="field"><label>Cobrimento (cm)</label><input type="number" step="0.5" value="${_elTemp.cob}" onchange="edT('cob',this.value)"></div>
+    </div>
+    ${_elTemp.longs.map((lg,i)=>`
+    <div class="sec-title"><h2>${lg.pos}</h2><div class="line"></div></div>
+    <div class="frow">
+      <div class="field"><label>Bitola (mm)</label><select onchange="edTl(${i},'bit',this.value)">${BITS.map(b=>`<option ${b==lg.bit?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Nº de barras</label><input type="number" value="${lg.q}" onchange="edTl(${i},'q',this.value)"></div>
+      <div class="field"><label>Dobra (cm)</label><input type="number" value="${lg.anc}" onchange="edTl(${i},'anc',this.value)"></div>
+    </div>`).join('')}`;
+  } else if(eng==='circ'){
+    form=`<div class="frow">
+      <div class="field"><label>Diâmetro (cm)</label><input type="number" value="${_elTemp.D}" class="${_elTemp.cob>=_elTemp.D/2?'err-input':''}" onchange="edT('D',this.value)"></div>
+      <div class="field"><label>Comprimento (cm)</label><input type="number" value="${_elTemp.L}" onchange="edT('L',this.value)"></div>
+      <div class="field"><label>Cobrimento (cm)</label><input type="number" step="0.5" value="${_elTemp.cob}" onchange="edT('cob',this.value)"></div>
+    </div>
+    <div class="sec-title"><h2>Longitudinais</h2><div class="line"></div></div>
+    <div class="frow">
+      <div class="field"><label>Bitola (mm)</label><select onchange="edTl(0,'bit',this.value)">${BITS.map(b=>`<option ${b==_elTemp.longs[0].bit?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Quantidade</label><input type="number" value="${_elTemp.longs[0].q}" onchange="edTl(0,'q',this.value)"></div>
+      <div class="field"><label>Arranque (cm)</label><input type="number" value="${_elTemp.longs[0].anc}" onchange="edTl(0,'anc',this.value)"></div>
+    </div>
+    <div class="sec-title"><h2>Espiral helicoidal</h2><div class="line"></div></div>
+    <div class="frow">
+      <div class="field"><label>Bitola (mm)</label><select onchange="edTe2('espiral','bit',this.value)">${BITS.map(b=>`<option ${b==_elTemp.espiral.bit?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Passo (cm)</label><input type="number" value="${_elTemp.espiral.passo}" class="${_elTemp.espiral.passo<=0?'err-input':''}" onchange="edTe2('espiral','passo',this.value)"></div>
+    </div>`;
+  } else if(eng==='estribo'){
+    form=`<div class="frow">
+      <div class="field"><label>Base (cm)</label><input type="number" value="${_elTemp.b}" onchange="edT('b',this.value)"></div>
+      <div class="field"><label>Altura (cm)</label><input type="number" value="${_elTemp.h}" onchange="edT('h',this.value)"></div>
+      <div class="field"><label>Bitola (mm)</label><select onchange="edTe2('estb','bit',this.value)">${BITS.map(b=>`<option ${b==_elTemp.estb.bit?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Quantidade (un)</label><input type="number" value="${_elTemp.qcom}" onchange="edT('qcom',this.value)"></div>
+    </div>
+    <div class="mini" style="margin-top:8px">Produto de prateleira — vendido por cento/milheiro.</div>`;
+  } else if(eng==='reta'){
+    form=`<div class="frow">
+      <div class="field"><label>Comprimento reto (cm)</label><input type="number" value="${_elTemp.comp}" onchange="edT('comp',this.value)"></div>
+      <div class="field"><label>Nº de dobras</label><input type="number" value="${_elTemp.dobras}" onchange="edT('dobras',this.value)"></div>
+      <div class="field"><label>Compr. dobra (cm)</label><input type="number" value="${_elTemp.anc}" onchange="edT('anc',this.value)"></div>
+      <div class="field"><label>Bitola (mm)</label><select onchange="edT('bitr',this.value)">${BITS.map(b=>`<option ${b==_elTemp.bitr?'selected':''}>${b}</option>`).join('')}</select></div>
+      <div class="field"><label>Quantidade</label><input type="number" value="${_elTemp.qcom}" onchange="edT('qcom',this.value)"></div>
+    </div>`;
+  } else if(eng==='tela'){
+    form=`<div class="frow">
+      <div class="field" style="grid-column:span 2"><label>Modelo</label><select onchange="edTstr('modeloTela',this.value)">${Object.keys(TELAS_PADRAO).map(m=>`<option ${m===_elTemp.modeloTela?'selected':''}>${m}</option>`).join('')}</select></div>
+      <div class="field"><label>Largura (cm)</label><input type="number" value="${_elTemp.W}" onchange="edT('W',this.value)"></div>
+      <div class="field"><label>Comprimento (cm)</label><input type="number" value="${_elTemp.H}" onchange="edT('H',this.value)"></div>
+      <div class="field"><label>Qtd painéis</label><input type="number" value="${_elTemp.qcom}" onchange="edT('qcom',this.value)"></div>
+    </div>
+    <div class="mini" style="margin-top:8px">${TELAS_PADRAO[_elTemp.modeloTela]||''} kg/m²</div>`;
+  } else if(eng==='trelica'){
+    form=`<div class="frow">
+      <div class="field" style="grid-column:span 2"><label>Modelo</label><select onchange="edTstr('modeloTr',this.value)">${Object.keys(TRELICAS).map(m=>`<option ${m===_elTemp.modeloTr?'selected':''}>${m}</option>`).join('')}</select></div>
+      <div class="field"><label>Comprimento (cm)</label><input type="number" value="${_elTemp.L}" onchange="edT('L',this.value)"></div>
+      <div class="field"><label>Quantidade</label><input type="number" value="${_elTemp.qcom}" onchange="edT('qcom',this.value)"></div>
+    </div>
+    <div class="mini" style="margin-top:8px">${TRELICAS[_elTemp.modeloTr]||''} kg/m</div>`;
+  } else if(eng==='revenda'){
+    form=_elTemp.rev.map((it,i)=>{const cat=REVENDA_CAT.find(c=>c.prod===it.prod);
+      return `<div class="frow" style="margin-top:6px">
+        <div class="field" style="grid-column:span 2"><label>Produto ${i+1}</label><select onchange="edTrv(${i},'prod',this.value)">${REVENDA_CAT.map(c=>`<option ${c.prod===it.prod?'selected':''}>${c.prod}</option>`).join('')}</select></div>
+        ${cat.temBit?`<div class="field"><label>Bitola</label><select onchange="edTrv(${i},'bit',this.value)">${BITS.map(b=>`<option ${b==it.bit?'selected':''}>${b}</option>`).join('')}</select></div>`:''}
+        <div class="field"><label>Qtd (${cat.un})</label><input type="number" value="${it.q}" onchange="edTrv(${i},'q',this.value)"></div>
+      </div>`;}).join('')
+      +`<button class="btn ghost sm" style="margin-top:10px" onclick="_elTemp.rev.push({prod:'Arame recozido nº 18',q:10});renderPopupBody()">+ item</button>`;
+  }
+
+  document.getElementById('popup-form').innerHTML=form;
+
+  const erros=validaEl(_elTemp);
+  document.getElementById('popup-erros').innerHTML=erros.length
+    ?`<div class="err-box">${erros.map(e=>`<p>⚠ ${e}</p>`).join('')}</div>`:'';
+
+  const ps=pecas(_elTemp),pesoTotEl=ps.reduce((s,p)=>s+p.peso,0);
+  document.getElementById('popup-pecas').innerHTML=`
+    <table>
+      <tr><th>Peça</th><th>Ø</th><th>Comp.</th><th>Qtd</th><th>Peso</th></tr>
+      ${ps.map(p=>`<tr>
+        <td class="tag-b">${p.cod}</td>
+        <td>${p.bit==='-'?'—':'Ø'+p.bit}</td>
+        <td>${p.comp?(p.comp/100).toFixed(2)+' m':'—'}</td>
+        <td>${p.q}</td>
+        <td><b>${fkg(p.peso)}</b></td>
+      </tr>`).join('')}
+      <tr style="background:#f0f4f8"><td colspan="4" style="font-weight:700">Total</td><td><b>${fkg(pesoTotEl)}</b></td></tr>
+    </table>`;
+
+  desenhaModal();
+  atualizaTotal();
+}
+
+/* ══════════════════════════════════════════════════════
+   SVG — seção transversal
+══════════════════════════════════════════════════════ */
+function desenhaModal(){
+  if(!_elTemp) return;
+  const eng=engDe(_elTemp.tipo),el=_elTemp;
+  const svg=document.getElementById('secao-modal'); if(!svg)return;
+  const altH={viga:270,pilar:270,sapata:270,circ:270,estribo:240,tela:270,trelica:70,reta:40,revenda:40};
+  const H=altH[eng]||40,W=260; svg.setAttribute('height',H);
+
+  if(eng==='sapata'||eng==='tela'){
+    const bw2=eng==='tela'?el.W:el.b,bh2=eng==='tela'?Math.min(el.H,el.W*1.4):el.h;
+    const s=Math.min(200/bw2,200/bh2),bw=bw2*s,bh=bh2*s,x=(W-bw)/2,y=(H-30-bh)/2;
+    let g=`<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="${eng==='tela'?'#fff':'#EDF1F5'}" stroke="#1a3a5c" stroke-width="2"/>`;
+    const nx=eng==='tela'?9:(el.longs[0]?el.longs[0].q:5),ny=eng==='tela'?7:(el.longs[1]?el.longs[1].q:5);
+    const c=eng==='tela'?6:el.cob*s;
+    for(let i=0;i<nx;i++){const yy=y+c+(bh-2*c)*i/Math.max(nx-1,1);g+=`<line x1="${x+c}" y1="${yy}" x2="${x+bw-c}" y2="${yy}" stroke="#0E96BC" stroke-width="2"/>`}
+    for(let i=0;i<ny;i++){const xx=x+c+(bw-2*c)*i/Math.max(ny-1,1);g+=`<line x1="${xx}" y1="${y+c}" x2="${xx}" y2="${y+bh-c}" stroke="#12bded" stroke-width="2"/>`}
+    g+=`<text x="${W/2}" y="${H-8}" text-anchor="middle" font-size="11" fill="#6B7280">${eng==='tela'?'painel soldado (ilustrativo)':'malha '+el.b+'×'+el.h+' cm'}</text>`;
+    svg.innerHTML=g; return;
+  }
+  if(eng==='circ'){
+    const R=90,cx=W/2,cy=(H-30)/2+6,c=el.cob/el.D*2*R;
+    let g=`<circle cx="${cx}" cy="${cy}" r="${R}" fill="#EDF1F5" stroke="#1a3a5c" stroke-width="2"/>
+    <circle cx="${cx}" cy="${cy}" r="${R-c}" fill="none" stroke="#2a7a8c" stroke-width="3" stroke-dasharray="6 4"/>`;
+    const n=el.longs[0].q,r=Math.max(4,el.longs[0].bit/2);
+    for(let i=0;i<n;i++){const a=i/n*2*Math.PI-Math.PI/2;
+      g+=`<circle cx="${(cx+(R-c-r-2)*Math.cos(a)).toFixed(1)}" cy="${(cy+(R-c-r-2)*Math.sin(a)).toFixed(1)}" r="${r}" fill="#0E96BC"/>`}
+    g+=`<text x="${W/2}" y="${H-8}" text-anchor="middle" font-size="11" fill="#6B7280">Ø${el.D} cm · ${n} barras · espiral Ø${el.espiral.bit} p/${el.espiral.passo}</text>`;
+    svg.innerHTML=g; return;
+  }
+  if(eng==='estribo'){
+    const s=Math.min(170/el.b,190/el.h),bw=el.b*s,bh=el.h*s,x=(W-bw)/2,y=(H-40-bh)/2+8;
+    svg.innerHTML=`<rect x="${x}" y="${y}" width="${bw}" height="${bh}" rx="10" fill="none" stroke="#2a7a8c" stroke-width="5"/>
+    <line x1="${x+bw*0.18}" y1="${y-2}" x2="${x+bw*0.42}" y2="${y+bh*0.24}" stroke="#2a7a8c" stroke-width="5" stroke-linecap="round"/>
+    <text x="${W/2}" y="${H-8}" text-anchor="middle" font-size="11" fill="#6B7280">estribo ${el.b}×${el.h} cm · Ø${el.estb.bit} · gancho 135°</text>`;
+    return;
+  }
+  if(eng==='viga'||eng==='pilar'){
+    const s=Math.min(180/el.b,210/el.h),bw=el.b*s,bh=el.h*s,x=(W-bw)/2,y=(H-40-bh)/2+8,c=el.cob*s;
+    let g=`<rect x="${x}" y="${y}" width="${bw}" height="${bh}" fill="#EDF1F5" stroke="#1a3a5c" stroke-width="2"/>`;
+    if(el.est) g+=`<rect x="${x+c}" y="${y+c}" width="${bw-2*c}" height="${bh-2*c}" rx="6" fill="none" stroke="#2a7a8c" stroke-width="3"/>`;
+    const sup=el.longs.find(l=>/Sup/i.test(l.pos)),inf=el.longs.find(l=>/Inf/i.test(l.pos)),lon=el.longs.find(l=>/Long/i.test(l.pos));
+    const drawBar=(lg,yy)=>{if(!lg)return'';let o='';const r=Math.max(3,lg.bit*s/20);
+      for(let i=0;i<lg.q;i++){const xx=lg.q===1?x+bw/2:x+c+r+(bw-2*c-2*r)*i/Math.max(lg.q-1,1);o+=`<circle cx="${xx.toFixed(1)}" cy="${yy.toFixed(1)}" r="${r}" fill="#0E96BC"/>`}return o};
+    if(lon){const r=Math.max(3.5,lon.bit*s/20),per=[[x+c+r,y+c+r],[x+bw-c-r,y+c+r],[x+bw-c-r,y+bh-c-r],[x+c+r,y+bh-c-r]];
+      for(let i=0;i<lon.q;i++){const p=per[i%4];g+=`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${r}" fill="#0E96BC"/>`}}
+    else{g+=drawBar(sup,y+c+5)+drawBar(inf,y+bh-c-5)}
+    g+=`<text x="${W/2}" y="${y+bh+22}" text-anchor="middle" font-size="11" fill="#6B7280">${el.b}×${el.h} cm · cob ${el.cob}${el.est?` · Ø${el.est.bit} c/${el.est.esp}`:''}</text>`;
+    svg.innerHTML=g; return;
+  }
+  if(eng==='trelica'){
+    const mid=H/2;
+    svg.innerHTML=`
+      <line x1="20" y1="${mid}" x2="${W-20}" y2="${mid}" stroke="#1a3a5c" stroke-width="4"/>
+      <line x1="20" y1="${H*0.2}" x2="${W-20}" y2="${H*0.2}" stroke="#0E96BC" stroke-width="3"/>
+      <line x1="20" y1="${H*0.8}" x2="${W-20}" y2="${H*0.8}" stroke="#0E96BC" stroke-width="3"/>
+      ${[0,1,2,3,4,5,6,7].map(i=>{const x0=20+i*(W-40)/7,x1=20+(i+1)*(W-40)/7;
+        return i%2===0?`<line x1="${x0}" y1="${H*0.2}" x2="${x1}" y2="${H*0.8}" stroke="#2a7a8c" stroke-width="2"/>`:
+          `<line x1="${x0}" y1="${H*0.8}" x2="${x1}" y2="${H*0.2}" stroke="#2a7a8c" stroke-width="2"/>`;}).join('')}
+      <text x="${W/2}" y="${H-2}" text-anchor="middle" font-size="10" fill="#6B7280">${el.modeloTr} · ${TRELICAS[el.modeloTr]} kg/m</text>`;
+    return;
+  }
+  svg.innerHTML=`<text x="${W/2}" y="25" text-anchor="middle" font-size="12" fill="#9CA3AF">Sem desenho para este tipo</text>`;
+}
+
+function atualizaTotal(){
+  if(!_elTemp) return;
+  const ps=pecas(_elTemp),peso=ps.reduce((s,p)=>s+p.peso,0);
+  const preco=+document.getElementById('popup-preco').value||CONFIG.PRECO_KG;
+  document.getElementById('popup-total').textContent=R$(peso*preco);
+}
+
+/* ══════════════════════════════════════════════════════
+   EDIÇÃO DO _elTemp
+══════════════════════════════════════════════════════ */
+function edT(k,v){if(!_elTemp)return;_elTemp[k]=+v;renderPopupBody();}
+function edTstr(k,v){if(!_elTemp)return;_elTemp[k]=v;renderPopupBody();}
+function edTl(i,k,v){if(!_elTemp)return;_elTemp.longs[i][k]=+v;renderPopupBody();}
+function edTe(k,v){if(!_elTemp)return;_elTemp.est[k]=+v;renderPopupBody();}
+function edTe2(obj,k,v){if(!_elTemp)return;_elTemp[obj][k]=+v;renderPopupBody();}
+function edTrv(i,k,v){if(!_elTemp)return;const it=_elTemp.rev[i];it[k]=k==='q'||k==='bit'?+v:v;renderPopupBody();}
+
+/* ══════════════════════════════════════════════════════
+   TOAST
+══════════════════════════════════════════════════════ */
+function showToast(msg,type='ok'){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast '+type+' show';
+  setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+/* ══════════════════════════════════════════════════════
+   LISTENER — mensagens do Bubble pai
+
+   Bubble envia:
+     { source:'bubble_armatech', action:'open_popup' }
+     { source:'bubble_armatech', action:'open_popup_edit',
+       editId:'V1', bubbleId:'1234abc', dadosJson:{...} }
+     { source:'bubble_armatech', action:'set_config',
+       config:{ ORC_ID:'...', EMP_ID:'...', PRECO_KG:9.5 } }
+     { source:'bubble_armatech', action:'close_popup' }
+
+   Armatech responde:
+     { source:'armatech', event:'armatech_ready', data:{version:'5.0'} }
+     { source:'armatech', event:'ferragem_inserida',
+       data:{ bubble_id, codigo, tipo, descricao, peso_kg, total_estimado } }
+     { source:'armatech', event:'ferragem_editada',
+       data:{ bubble_id, codigo, tipo, descricao, peso_kg, total_estimado } }
+     { source:'armatech', event:'popup_fechado', data:{} }
+══════════════════════════════════════════════════════ */
+window.addEventListener('message', async(e)=>{
+  const d=e.data;
+  if(!d||d.source!=='bubble_armatech') return;
+  switch(d.action){
+    case 'open_popup':
+      await carregarCodsUsados();
+      openPopup({codsUsados:_codsUsados});
+      break;
+    case 'open_popup_edit':
+      openPopup({editId:d.editId,bubbleId:d.bubbleId,dadosJson:d.dadosJson});
+      break;
+    case 'set_config':
+      Object.assign(CONFIG,d.config||{});
+      if(d.config?.PRECO_KG) document.getElementById('popup-preco').value=CONFIG.PRECO_KG;
+      break;
+    case 'close_popup':
+      closePopup();
+      break;
+  }
+});
+
+/* ══════════════════════════════════════════════════════
+   INIT
+══════════════════════════════════════════════════════ */
+if(CONFIG.MODO==='auto_open'){
+  carregarCodsUsados().then(()=>openPopup());
+}
+// Avisa o Bubble que o HTML está carregado e pronto
+notifyBubble('armatech_ready',{version:'5.0'});
+</script>
+</body>
+</html>
