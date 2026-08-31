@@ -38,8 +38,9 @@ const CONFIG = {
   WF_EDITAR  : '/wf/armatech_editar_ferragem',
   WF_EXCLUIR : '/wf/armatech_excluir_ferragem',
 
-  /* ── Data type para leitura (GET) ───────────────────────── */
-  OBJ_FERRAGEM : '/obj/armatech_ferragem',
+  /* ── Data types para leitura (GET) ─────────────────────── */
+  OBJ_FERRAGEM  : '/obj/armatech_ferragem',
+  OBJ_GRUPO_FA  : '/obj/eng_grupo_ferragens',
 
   /* ── Modo: 'popup_only' | 'auto_open' ──────────────────── */
   MODO : 'popup_only',
@@ -140,6 +141,11 @@ body{font-family:'Lato',sans-serif;background:transparent;color:var(--tx);font-s
 .popup-tipo label{font-size:11px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px}
 .popup-tipo select{width:100%;max-width:500px;padding:9px 12px;border:1.5px solid var(--bd);border-radius:8px;font-family:'Poppins';font-weight:600;font-size:13px;color:var(--navy);background:#fff}
 .popup-tipo select:focus{outline:0;border-color:var(--pr)}
+.popup-grupo{padding:10px 20px;background:#edf8ff;border-bottom:1px solid #bae6fd;flex-shrink:0;display:none}
+.popup-grupo label{font-size:11px;font-weight:700;color:#0369a1;text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:5px}
+.popup-grupo select{width:100%;max-width:500px;padding:8px 12px;border:1.5px solid #bae6fd;border-radius:8px;font-family:'Lato';font-size:13px;color:var(--navy);background:#fff}
+.popup-grupo select:focus{outline:0;border-color:var(--pr)}
+.grupo-tag{display:inline-block;background:#0ea5e9;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;margin-left:8px;vertical-align:middle}
 .popup-two{display:grid;grid-template-columns:1fr 1fr;min-height:300px}
 .popup-form-wrap{padding:16px 20px;border-right:1px solid var(--bd);overflow-y:auto;max-height:55vh}
 .popup-right{padding:16px;background:#f8fafc;display:flex;flex-direction:column;gap:10px;overflow-y:auto;max-height:55vh}
@@ -175,6 +181,15 @@ body{font-family:'Lato',sans-serif;background:transparent;color:var(--tx);font-s
       <select id="tipo-sel" onchange="tipoChanged(this.value)">
         <option value="">— selecione o tipo de produto —</option>
       </select>
+    </div>
+    <div class="popup-grupo" id="popup-grupo-wrap">
+      <label>⚡ Grupo padrão <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#0369a1">(opcional — pré-preenche as dimensões)</span></label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="grupo-sel" onchange="aplicarGrupo(this.value)" style="flex:1">
+          <option value="">— preencher manualmente —</option>
+        </select>
+        <span id="grupo-loading" style="display:none;color:#0369a1;font-size:12px;white-space:nowrap">⏳ Carregando...</span>
+      </div>
     </div>
     <div id="popup-body" style="display:none">
       <div class="popup-two">
@@ -220,6 +235,8 @@ let _elTemp    = null;   // ferragem sendo editada no popup
 let _editingId = null;   // código local (ex: "V1")
 let _bubbleId  = null;   // _id do registro Bubble (para edição)
 let _codsUsados = [];    // códigos já inseridos neste orçamento
+let _grupoId   = null;   // _id do Eng_Grupo_Ferragens selecionado
+let _grupos    = [];     // grupos disponíveis para o tipo atual
 
 /* ══════════════════════════════════════════════════════
    UTILITÁRIOS DE ENGENHARIA
@@ -364,18 +381,58 @@ async function submitFerragem(){
   const peso  = ps.reduce((s,p)=>s+p.peso,0);
 
   const payload = {
+    /* ── Referências ─────────────────────────────────────── */
     orc_id         : CONFIG.ORC_ID,
     emp_id         : CONFIG.EMP_ID,
     user_id        : CONFIG.USER_ID,
-    codigo         : cod,
-    tipo           : _elTemp.tipo,
-    descricao      : resumoEl(_elTemp),
-    peso_kg        : +peso.toFixed(3),
-    preco_kg       : preco,
-    total_estimado : +(peso*preco).toFixed(2),
-    dados_json     : JSON.stringify(_elTemp),  // para recalcular depois
+    eng_grupo_ref  : _grupoId || '',
+
+    /* ── Identificação ───────────────────────────────────── */
+    fa_codigo      : cod,
+    fa_tipo        : _elTemp.tipo,
+    fa_descricao   : resumoEl(_elTemp),
+
+    /* ── Dimensões principais ────────────────────────────── */
+    fa_b           : _elTemp.b    || 0,
+    fa_h           : _elTemp.h    || 0,
+    fa_L           : _elTemp.L    || 0,
+    fa_cob         : _elTemp.cob  || 0,
+    fa_D           : _elTemp.D    || 0,
+
+    /* ── Corte e dobra / reta ────────────────────────────── */
+    fa_comp_reto   : _elTemp.comp   || 0,
+    fa_n_dobras    : _elTemp.dobras || 0,
+    fa_comp_dobra  : _elTemp.anc    || 0,
+    fa_bitola_reta : String(_elTemp.bitr || _elTemp.estb?.bit || ''),
+
+    /* ── Tela ────────────────────────────────────────────── */
+    fa_W           : _elTemp.W  || 0,
+    fa_modelo_tela : _elTemp.modeloTela || '',
+
+    /* ── Treliça ─────────────────────────────────────────── */
+    fa_modelo_tr   : _elTemp.modeloTr || '',
+
+    /* ── Estribos ────────────────────────────────────────── */
+    fa_est_bitola  : String(_elTemp.est?.bit || ''),
+    fa_est_esp     : _elTemp.est?.esp || 0,
+
+    /* ── Espiral (circular) ──────────────────────────────── */
+    fa_esp_bitola  : String(_elTemp.espiral?.bit || ''),
+    fa_esp_passo   : _elTemp.espiral?.passo || 0,
+
+    /* ── Quantidade e preço ──────────────────────────────── */
+    fa_qcom        : _elTemp.qcom || 1,
+    fa_preco_kg    : preco,
+    fa_peso_kg     : +peso.toFixed(3),
+    fa_total_rs    : +(peso*preco).toFixed(2),
+
+    /* ── Status e projeto ────────────────────────────────── */
+    fa_status      : 'Orçado',
     proj_nome      : CONFIG.PROJ_NOME,
     proj_rev       : CONFIG.PROJ_REV,
+
+    /* ── JSON completo para recalcular depois ────────────── */
+    dados_json     : JSON.stringify(_elTemp),
   };
   if(_bubbleId) payload.ferragem_bubble_id = _bubbleId;
 
@@ -454,7 +511,8 @@ function openPopup(opts={}){
 
 function closePopup(){
   document.getElementById('popupBg').classList.remove('open');
-  _elTemp=null; _editingId=null; _bubbleId=null;
+  _elTemp=null; _editingId=null; _bubbleId=null; _grupoId=null; _grupos=[];
+  document.getElementById('popup-grupo-wrap').style.display='none';
   notifyBubble('popup_fechado', {});
 }
 
@@ -462,6 +520,9 @@ function closePopup(){
    POPUP — seleção de tipo
 ══════════════════════════════════════════════════════ */
 function tipoChanged(tipo){
+  _grupoId=null; _grupos=[];
+  document.getElementById('popup-grupo-wrap').style.display='none';
+  document.getElementById('grupo-sel').innerHTML='<option value="">— preencher manualmente —</option>';
   if(!tipo){
     _elTemp=null;
     document.getElementById('popup-body').style.display='none';
@@ -489,6 +550,69 @@ function tipoChanged(tipo){
   document.getElementById('popup-body').style.display='';
   document.getElementById('btn-inserir').disabled=false;
   renderPopupBody();
+
+  // Carrega grupos disponíveis para este tipo (async, não bloqueia UI)
+  carregarGrupos(tipo);
+}
+
+/* ── Busca grupos padrão do tipo selecionado no Bubble ──────── */
+async function carregarGrupos(tipo){
+  if(!CONFIG.EMP_ID && !CONFIG.OBJ_GRUPO_FA) return;
+  const wrap=document.getElementById('popup-grupo-wrap');
+  const sel=document.getElementById('grupo-sel');
+  const loading=document.getElementById('grupo-loading');
+  loading.style.display='';
+  try{
+    const constraints=[{key:'Tipo_fa',constraint_type:'equals',value:tipo}];
+    if(CONFIG.EMP_ID) constraints.push({key:'0.adm_empresa',constraint_type:'equals',value:CONFIG.EMP_ID});
+    const data=await bubbleGet(CONFIG.OBJ_GRUPO_FA,{
+      constraints:JSON.stringify(constraints),
+      limit:50
+    });
+    _grupos=data.response?.results||[];
+  }catch(e){console.warn('Grupos FA não carregados:',e);}
+  loading.style.display='none';
+  if(_grupos.length===0) return;
+  sel.innerHTML='<option value="">— preencher manualmente —</option>'+
+    _grupos.map(g=>{
+      const nome=g.nome_grupo||g['Tipo_fa']||'Grupo';
+      const bit=g['Bitola']?` · Ø${g['Bitola']}`:'';
+      const preco=g['preco-kg']?` · R$${Number(g['preco-kg']).toFixed(2)}/kg`:'';
+      return `<option value="${g._id}">${nome}${bit}${preco}</option>`;
+    }).join('');
+  wrap.style.display='';
+}
+
+/* ── Aplica template do grupo selecionado ───────────────────── */
+function aplicarGrupo(grupoId){
+  _grupoId=grupoId||null;
+  if(!grupoId) return;
+  const g=_grupos.find(x=>x._id===grupoId);
+  if(!g) return;
+
+  // 1. Pre-fill preço/kg do grupo
+  if(g['preco-kg']) document.getElementById('popup-preco').value=g['preco-kg'];
+
+  // 2. Se tem JSON de template, carrega dimensões completas
+  if(g['fa_dados_template']){
+    try{
+      const tmpl=typeof g['fa_dados_template']==='string'
+        ?JSON.parse(g['fa_dados_template']):g['fa_dados_template'];
+      const tipo=_elTemp.tipo;
+      _elTemp={...tmpl,tipo,id:'_tmp'};
+      renderPopupBody();
+      showToast('Grupo aplicado: '+( g.nome_grupo||g['Tipo_fa']),'ok');
+      return;
+    }catch(e){console.warn('fa_dados_template inválido:',e);}
+  }
+
+  // 3. Fallback: só aplica bitola nas longitudinais
+  if(g['Bitola']&&_elTemp.longs){
+    const bit=parseFloat(g['Bitola']);
+    if(!isNaN(bit)&&KGM[bit]) _elTemp.longs.forEach(l=>l.bit=bit);
+  }
+  renderPopupBody();
+  showToast('Preço e bitola do grupo aplicados','ok');
 }
 
 /* ══════════════════════════════════════════════════════
