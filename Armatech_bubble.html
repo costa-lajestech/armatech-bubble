@@ -34,12 +34,13 @@ const CONFIG = {
   PRECO_KG : 8.50,  // ← Bubble: Empresa's preco_kg_aco
 
   /* ── Endpoints dos workflows Bubble (POST) ──────────────── */
-  WF_INSERIR : '/wf/armatech_inserir_ferragem',
-  WF_EDITAR  : '/wf/armatech_editar_ferragem',
-  WF_EXCLUIR : '/wf/armatech_excluir_ferragem',
+  // ⚠️ Ajuste os nomes abaixo para os nomes reais dos seus API Workflows no Bubble
+  WF_INSERIR : '/wf/ven_inserir_ferragem',
+  WF_EDITAR  : '/wf/ven_editar_ferragem',
+  WF_EXCLUIR : '/wf/ven_excluir_ferragem',
 
   /* ── Data types para leitura (GET) ─────────────────────── */
-  OBJ_FERRAGEM  : '/obj/armatech_ferragem',
+  OBJ_FERRAGEM  : '/obj/ven_elementos_fa',       // ← atualizado para ven_elementos_FA
   OBJ_GRUPO_FA  : '/obj/eng_grupo_ferragens',
 
   /* ── Modo: 'popup_only' | 'auto_open' ──────────────────── */
@@ -49,8 +50,8 @@ const CONFIG = {
 /* ════════════════════════════════════════════════════════════
    CONSTANTES DE ENGENHARIA (fixas — não alterar)
 ════════════════════════════════════════════════════════════ */
-const KGM = {4.2:0.109,5:0.154,6.3:0.245,8:0.395,10:0.617,12.5:0.963,16:1.578,20:2.466,25:3.853};
-const BITS = Object.keys(KGM).map(Number);
+const KGM = {3.8:0.089,4.2:0.109,5:0.154,6:0.222,6.3:0.245,7:0.302,8:0.395,9.5:0.558,10:0.617,12.5:0.963,16:1.578,20:2.466,25:3.853};
+let BITS = Object.keys(KGM).map(Number); // filtrado por empresa via set_config
 const TRELICAS = {'TR 8645':0.735,'TR 12645':0.880,'TR 16745':1.060,'TR 20745':1.222,'TR 25856':1.556};
 const TELAS_PADRAO = {'Q-61 (Ø3,4 c/15)':0.97,'Q-92 (Ø4,2 c/15)':1.48,'Q-113 (Ø4,2 c/10)':1.80,'Q-138 (Ø4,2 c/10)':2.20,'Q-196 (Ø5 c/10)':3.11};
 const REVENDA_CAT = [
@@ -361,9 +362,9 @@ async function carregarCodsUsados(){
   try {
     const data = await bubbleGet(CONFIG.OBJ_FERRAGEM, {
       constraints: JSON.stringify([{key:'orc_id',constraint_type:'equals',value:CONFIG.ORC_ID}]),
-      fields:'codigo'
+      fields:'fa_codigo'
     });
-    _codsUsados = (data.response?.results||[]).map(r=>r.codigo||'');
+    _codsUsados = (data.response?.results||[]).map(r=>r.fa_codigo||'');
   } catch(e){ console.warn('Não foi possível carregar códigos existentes:', e); }
 }
 
@@ -392,10 +393,10 @@ async function submitFerragem(){
     fa_tipo        : _elTemp.tipo,
     fa_descricao   : resumoEl(_elTemp),
 
-    /* ── Dimensões principais ────────────────────────────── */
-    fa_b           : _elTemp.b    || 0,
-    fa_h           : _elTemp.h    || 0,
-    fa_L           : _elTemp.L    || 0,
+    /* ── Dimensões principais (nomes dos campos do Bubble) ── */
+    fa_cm_base_a   : _elTemp.b    || 0,
+    fa_cm_altura_a : _elTemp.h    || 0,
+    fa_cm_largura_a: _elTemp.L    || 0,
     fa_cob         : _elTemp.cob  || 0,
     fa_D           : _elTemp.D    || 0,
 
@@ -403,10 +404,11 @@ async function submitFerragem(){
     fa_comp_reto   : _elTemp.comp   || 0,
     fa_n_dobras    : _elTemp.dobras || 0,
     fa_comp_dobra  : _elTemp.anc    || 0,
-    fa_bitola_reta : String(_elTemp.bitr || _elTemp.estb?.bit || ''),
+    fa_bitola_reta_a : String(_elTemp.bitr || _elTemp.estb?.bit || ''),
 
     /* ── Tela ────────────────────────────────────────────── */
     fa_W           : _elTemp.W  || 0,
+    fa_H           : _elTemp.H  || 0,
     fa_modelo_tela : _elTemp.modeloTela || '',
 
     /* ── Treliça ─────────────────────────────────────────── */
@@ -864,6 +866,14 @@ window.addEventListener('message', async(e)=>{
     case 'set_config':
       Object.assign(CONFIG,d.config||{});
       if(d.config?.PRECO_KG) document.getElementById('popup-preco').value=CONFIG.PRECO_KG;
+      // Filtra bitolas disponíveis para esta empresa
+      if(d.config?.BITOLAS){
+        const raw = typeof d.config.BITOLAS==='string'
+          ? d.config.BITOLAS.split(',').map(b=>parseFloat(b.trim()))
+          : d.config.BITOLAS.map(b=>parseFloat(b));
+        const validas = raw.filter(b=>KGM[b]);
+        if(validas.length>0){ BITS.splice(0,BITS.length,...validas); }
+      }
       break;
     case 'close_popup':
       closePopup();
