@@ -874,6 +874,8 @@ window.addEventListener('message', async(e)=>{
         const validas = raw.filter(b=>KGM[b]);
         if(validas.length>0){ BITS.splice(0,BITS.length,...validas); }
       }
+      // Auto-abre o popup ao receber set_config (iframe já está carregado)
+      carregarCodsUsados().then(()=>openPopup({codsUsados:_codsUsados}));
       break;
     case 'close_popup':
       closePopup();
