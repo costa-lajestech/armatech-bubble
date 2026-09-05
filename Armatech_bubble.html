@@ -133,7 +133,7 @@ body{font-family:'Lato',sans-serif;background:transparent;color:var(--tx);font-s
 /* Popup */
 .modal-bg{position:fixed;inset:0;background:rgba(10,25,41,.58);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:20px;overflow-y:auto}
 /* modo iframe: sem overlay, formulário ocupa 100% da página */
-body.iframe-mode .modal-bg{position:static;background:none;display:flex!important;padding:0;overflow:visible}
+body.iframe-mode .modal-bg.open{position:static;background:none;padding:0;overflow:visible}
 body.iframe-mode .popup{box-shadow:none;border-radius:0;max-width:100%;width:100%;height:auto}
 body.iframe-mode .popup-form-wrap{overflow-y:visible;max-height:none}
 body.iframe-mode .popup-right{overflow-y:visible;max-height:none}
