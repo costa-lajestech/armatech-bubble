@@ -859,8 +859,11 @@ function showToast(msg,type='ok'){
 ══════════════════════════════════════════════════════ */
 window.addEventListener('message', async(e)=>{
   const d=e.data;
-  if(!d||d.source!=='bubble_armatech') return;
-  switch(d.action){
+  if(!d) return;
+  // Aceita tanto {source:'bubble_armatech', action:'...'} quanto {type:'...'} (Bubble Toolbox)
+  if(d.source && d.source!=='bubble_armatech') return;
+  const action = d.action || d.type;
+  switch(action){
     case 'open_popup':
       await carregarCodsUsados();
       openPopup({codsUsados:_codsUsados});
