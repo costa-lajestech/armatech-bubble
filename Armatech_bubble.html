@@ -901,12 +901,17 @@ window.addEventListener('message', async(e)=>{
     const validas = raw.filter(b=>KGM[b]);
     if(validas.length>0){ BITS.splice(0,BITS.length,...validas); }
   }
-  // Se veio ORC_ID pela URL, abre direto
+  // Se veio ORC_ID pela URL, abre direto (modo standalone com dados reais)
   if(CONFIG.ORC_ID){
     carregarCodsUsados().then(()=>openPopup({codsUsados:_codsUsados}));
     return;
   }
-  // Fallback: modo auto_open via CONFIG
+  // Modo standalone (acesso direto ao link, fora do Bubble): abre popup de demonstração
+  if(window.self === window.top){
+    openPopup({codsUsados:[]});
+    return;
+  }
+  // Fallback: modo auto_open via CONFIG (dentro de iframe, se configurado)
   if(CONFIG.MODO==='auto_open'){
     carregarCodsUsados().then(()=>openPopup({codsUsados:_codsUsados}));
   }
