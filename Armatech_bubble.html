@@ -14,7 +14,7 @@
 <script>
 const CONFIG = {
   /* ── Bubble API ──────────────────────────────────────────── */
-  API_BASE  : 'https://app.lajestech.com.br/version-test/api/1.1',
+  API_BASE  : 'https://app.lajestech.com.br/api/1.1',
   API_TOKEN : '3685dac860b673b58b65e7822e17f1bd',  // ← Bubble: App token
 
   /* ── Contexto do pedido (Bubble injeta) ─────────────────── */
@@ -913,6 +913,15 @@ window.addEventListener('message', async(e)=>{
     carregarCodsUsados().then(()=>openPopup({codsUsados:_codsUsados}));
   }
 })();
+// Auto-detecta ambiente version-test vs live via referrer
+(function(){
+  var ref = document.referrer || '';
+  var href = window.location.href || '';
+  if(ref.includes('version-test') || href.includes('version-test')){
+    CONFIG.API_BASE = 'https://app.lajestech.com.br/version-test/api/1.1';
+  }
+})();
+
 // Se está dentro de um iframe, ativa modo iframe (sem overlay)
 if(window.self !== window.top){
   document.body.classList.add('iframe-mode');
