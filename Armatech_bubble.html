@@ -884,11 +884,30 @@ window.addEventListener('message', async(e)=>{
 });
 
 /* ══════════════════════════════════════════════════════
-   INIT
+   INIT — lê parâmetros da URL e abre automaticamente
 ══════════════════════════════════════════════════════ */
-if(CONFIG.MODO==='auto_open'){
-  carregarCodsUsados().then(()=>openPopup());
-}
+(function initFromUrl(){
+  const p = new URLSearchParams(window.location.search);
+  if(p.get('orc_id'))    CONFIG.ORC_ID    = p.get('orc_id');
+  if(p.get('emp_id'))    CONFIG.EMP_ID    = p.get('emp_id');
+  if(p.get('user_id'))   CONFIG.USER_ID   = p.get('user_id');
+  if(p.get('preco_kg'))  CONFIG.PRECO_KG  = parseFloat(p.get('preco_kg'));
+  if(p.get('proj_nome')) CONFIG.PROJ_NOME = p.get('proj_nome');
+  if(p.get('bitolas')){
+    const raw = p.get('bitolas').split(',').map(b=>parseFloat(b.trim()));
+    const validas = raw.filter(b=>KGM[b]);
+    if(validas.length>0){ BITS.splice(0,BITS.length,...validas); }
+  }
+  // Se veio ORC_ID pela URL, abre direto
+  if(CONFIG.ORC_ID){
+    carregarCodsUsados().then(()=>openPopup({codsUsados:_codsUsados}));
+    return;
+  }
+  // Fallback: modo auto_open via CONFIG
+  if(CONFIG.MODO==='auto_open'){
+    carregarCodsUsados().then(()=>openPopup({codsUsados:_codsUsados}));
+  }
+})();
 // Avisa o Bubble que o HTML está carregado e pronto
 notifyBubble('armatech_ready',{version:'5.0'});
 </script>
